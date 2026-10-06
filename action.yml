@@ -1,0 +1,36 @@
+name: 'Reporting Digest'
+description: 'Turn a JSONL event feed into an evidence-backed markdown digest in CI: counts per category x severity, top items, open exceptions. Standard library only.'
+author: 'Mohammed Abdelshafy'
+branding:
+  icon: 'file-text'
+  color: 'yellow'
+inputs:
+  feed:
+    description: 'Path to the JSONL event feed, relative to your repo root'
+    required: true
+  out:
+    description: 'Path to write the markdown digest, relative to your repo root'
+    required: true
+  since:
+    description: "Time window like '24h' or '7d'; default is all events"
+    required: false
+    default: ''
+  title:
+    description: 'Digest title'
+    required: false
+    default: 'Daily Ops Digest'
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout Reporting Digest
+      uses: actions/checkout@v4
+      with:
+        repository: MohammedAbdelshafy/reporting-digest
+        path: _reporting_digest
+    - name: Build digest
+      shell: bash
+      run: |
+        cd _reporting_digest
+        args="--feed \"${{ github.workspace }}/${{ inputs.feed }}\" --out \"${{ github.workspace }}/${{ inputs.out }}\" --title \"${{ inputs.title }}\""
+        if [ -n "${{ inputs.since }}" ]; then args="$args --since \"${{ inputs.since }}\""; fi
+        python3 -m reporting_digest $args
