@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+reporting_digest.py
+reporting_digest.egg-info/PKG-INFO
+reporting_digest.egg-info/SOURCES.txt
+reporting_digest.egg-info/dependency_links.txt
+reporting_digest.egg-info/entry_points.txt
+reporting_digest.egg-info/top_level.txt
+tests/test_digest.py

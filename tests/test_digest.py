@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CLI = os.path.join(ROOT, "reporting-digest")
+CLI = os.path.join(ROOT, "reporting_digest.py")
 SAMPLE_FEED = os.path.join(ROOT, "samples", "events.jsonl")
 
 

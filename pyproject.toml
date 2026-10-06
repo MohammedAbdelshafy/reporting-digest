@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reporting-digest"
+version = "0.1.0"
+description = "Cron-friendly CLI that turns a JSONL event feed into an evidence-backed markdown digest: counts per category x severity, top items, open exceptions. Standard library only."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+[project.scripts]
+reporting-digest = "reporting_digest:main"
+
+[tool.setuptools]
+py-modules = ["reporting_digest"]
