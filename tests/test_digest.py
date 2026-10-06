@@ -7,10 +7,14 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(ROOT, "reporting_digest.py")
 SAMPLE_FEED = os.path.join(ROOT, "samples", "events.jsonl")
+
+sys.path.insert(0, ROOT)
+import reporting_digest  # noqa: E402  (imported for unit-level failure tests)
 
 
 def now_iso(delta_hours=0):
@@ -223,6 +227,112 @@ class DigestTest(unittest.TestCase):
         proc = run_cli("--feed", self.feed, "--out", nested)
         self.assertEqual(proc.returncode, 0)
         self.assertTrue(os.path.exists(nested))
+
+
+class InputValidationTest(unittest.TestCase):
+    """Edge cases and failure paths: every one must exit 2 with a clear
+    message and no traceback."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.feed = os.path.join(self.tmp.name, "events.jsonl")
+        self.out = os.path.join(self.tmp.name, "digest.md")
+
+    def test_exit_2_since_overflow(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        proc = run_cli("--feed", self.feed, "--out", self.out,
+                       "--since", "99999999999999999999999d")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("too large", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_exit_2_out_same_as_feed_leaves_feed_intact(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        with open(self.feed, "rb") as handle:
+            before = handle.read()
+        proc = run_cli("--feed", self.feed, "--out", self.feed)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("must not be the same file", proc.stderr)
+        with open(self.feed, "rb") as handle:
+            self.assertEqual(handle.read(), before)
+
+    def test_exit_2_empty_title(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        proc = run_cli("--feed", self.feed, "--out", self.out,
+                       "--title", "   ")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("must not be empty", proc.stderr)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_exit_2_out_parent_is_a_file(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        blocker = os.path.join(self.tmp.name, "blocker")
+        with open(blocker, "w") as handle:
+            handle.write("not a dir")
+        proc = run_cli("--feed", self.feed, "--out",
+                       os.path.join(blocker, "digest.md"))
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("cannot write", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_exit_2_non_utf8_feed(self):
+        with open(self.feed, "wb") as handle:
+            handle.write(b"\xff\xfe this is not utf-8\n")
+            handle.write((json.dumps(make_event("api", "info", "x")) + "\n")
+                         .encode("utf-8"))
+        proc = run_cli("--feed", self.feed, "--out", self.out)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("not valid UTF-8", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_exit_2_unreadable_feed(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        with mock.patch("builtins.open",
+                        side_effect=PermissionError(13, "Permission denied")):
+            with self.assertRaises(SystemExit) as ctx:
+                reporting_digest.main(["--feed", self.feed, "--out", self.out])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_exit_2_unwritable_out(self):
+        write_feed(self.feed, [make_event("api", "info", "x")])
+        with mock.patch.object(reporting_digest.Path, "write_text",
+                               side_effect=PermissionError(13,
+                                                           "Permission denied")):
+            with self.assertRaises(SystemExit) as ctx:
+                reporting_digest.main(["--feed", self.feed, "--out", self.out])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_bom_feed_parses_cleanly(self):
+        with open(self.feed, "wb") as handle:
+            handle.write(b"\xef\xbb\xbf")
+            handle.write((json.dumps(make_event("api", "info", "bom-ok")) + "\n")
+                         .encode("utf-8"))
+        proc = run_cli("--feed", self.feed, "--out", self.out)
+        self.assertEqual(proc.returncode, 0)
+        digest = read_digest(self.out)
+        self.assertIn("bom-ok", digest)
+        self.assertIn("- Unparseable lines skipped: 0", digest)
+
+    def test_pre1970_timestamps_sort_most_recent_first(self):
+        write_feed(self.feed, [
+            make_event("api", "info", "old-event",
+                       timestamp="1969-12-31T23:59:59Z"),
+            make_event("api", "info", "new-event", hours_ago=0),
+        ])
+        proc = run_cli("--feed", self.feed, "--out", self.out)
+        self.assertEqual(proc.returncode, 0)
+        digest = read_digest(self.out)
+        section = digest.split("### api")[1].split("## Open exceptions")[0]
+        self.assertLess(section.index("new-event"), section.index("old-event"))
+
+    def test_help_documents_since_units(self):
+        proc = run_cli("--help")
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--since", proc.stdout)
+        self.assertIn("m=minutes", proc.stdout)
+        self.assertIn("w=weeks", proc.stdout)
 
 
 if __name__ == "__main__":

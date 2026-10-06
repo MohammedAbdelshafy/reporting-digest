@@ -8,7 +8,9 @@ derived from the feed; nothing is invented.
 
 Exit codes:
     0  success (even when criticals are present -- this is a reporter, not an alerter)
-    2  unusable input (missing/unreadable feed file, zero parseable lines in window)
+    2  unusable input or output: missing/unreadable feed file, zero parseable
+       lines in window, invalid --since/--title, --out identical to --feed,
+       or unwritable --out path
 """
 
 import argparse
@@ -41,7 +43,10 @@ def parse_since(value):
     if amount <= 0:
         fail(f"invalid --since value {value!r}; amount must be positive")
     unit = _SINCE_UNITS[match.group(2).lower()]
-    return timedelta(**{unit: amount})
+    try:
+        return timedelta(**{unit: amount})
+    except OverflowError:
+        fail(f"invalid --since value {value!r}; window is too large")
 
 
 def parse_timestamp(value):
@@ -59,61 +64,72 @@ def parse_timestamp(value):
 
 
 def load_events(feed_path):
-    """Read the JSONL feed. Returns (events, unparseable_count, total_lines).
+    """Read the JSONL feed. Returns (events, unparseable_count).
 
     Blank lines are skipped silently. Any non-blank line that is not valid
     JSON, or is missing/invalid required fields, counts as unparseable.
     Required fields: timestamp (ISO 8601), category, severity
     (info|warning|critical), source, message. Extra fields (e.g. id) are kept.
+    A leading UTF-8 BOM is tolerated.
     """
     events = []
     unparseable = 0
-    total_lines = 0
-    with open(feed_path, "r", encoding="utf-8") as handle:
-        for lineno, raw in enumerate(handle, start=1):
-            total_lines += 1
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                unparseable += 1
-                print(f"reporting-digest: skipping unparseable line {lineno}",
-                      file=sys.stderr)
-                continue
-            if not isinstance(record, dict):
-                unparseable += 1
-                print(f"reporting-digest: skipping non-object line {lineno}",
-                      file=sys.stderr)
-                continue
-            timestamp = parse_timestamp(record.get("timestamp", ""))
-            severity = record.get("severity")
-            category = record.get("category")
-            source = record.get("source")
-            message = record.get("message")
-            valid = (
-                timestamp is not None
-                and severity in SEVERITY_RANK
-                and isinstance(category, str) and category.strip()
-                and isinstance(source, str) and source.strip()
-                and isinstance(message, str) and message.strip()
-            )
-            if not valid:
-                unparseable += 1
-                print(f"reporting-digest: skipping invalid event on line {lineno}",
-                      file=sys.stderr)
-                continue
-            events.append({
-                "timestamp": timestamp,
-                "category": category.strip(),
-                "severity": severity,
-                "source": source.strip(),
-                "message": message.strip(),
-                "id": record.get("id"),
-                "lineno": lineno,
-            })
-    return events, unparseable, total_lines
+    try:
+        handle = open(feed_path, "r", encoding="utf-8-sig")
+    except OSError as exc:
+        fail(f"cannot read feed file {feed_path}: {exc}")
+    lineno = 0
+    try:
+        with handle:
+            for raw in handle:
+                lineno += 1
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    unparseable += 1
+                    print(f"reporting-digest: skipping unparseable line {lineno}",
+                          file=sys.stderr)
+                    continue
+                if not isinstance(record, dict):
+                    unparseable += 1
+                    print(f"reporting-digest: skipping non-object line {lineno}",
+                          file=sys.stderr)
+                    continue
+                timestamp = parse_timestamp(record.get("timestamp", ""))
+                severity = record.get("severity")
+                category = record.get("category")
+                source = record.get("source")
+                message = record.get("message")
+                valid = (
+                    timestamp is not None
+                    and severity in SEVERITY_RANK
+                    and isinstance(category, str) and category.strip()
+                    and isinstance(source, str) and source.strip()
+                    and isinstance(message, str) and message.strip()
+                )
+                if not valid:
+                    unparseable += 1
+                    print(f"reporting-digest: skipping invalid event on line {lineno}",
+                          file=sys.stderr)
+                    continue
+                events.append({
+                    "timestamp": timestamp,
+                    "category": category.strip(),
+                    "severity": severity,
+                    "source": source.strip(),
+                    "message": message.strip(),
+                    "id": record.get("id"),
+                    "lineno": lineno,
+                })
+    except UnicodeDecodeError:
+        fail(f"feed file {feed_path} is not valid UTF-8 "
+             f"(decoding failed near line {lineno + 1})")
+    except OSError as exc:
+        fail(f"error while reading feed file {feed_path}: {exc}")
+    return events, unparseable
 
 
 def esc(text):
@@ -167,8 +183,11 @@ def build_digest(title, since_label, generated_at, events, unparseable):
         lines.append(f"### {esc(category)}")
         lines.append("")
         bucket = [e for e in events if e["category"] == category]
-        bucket.sort(key=lambda e: (SEVERITY_RANK[e["severity"]],
-                                   -e["timestamp"].timestamp()))
+        # Most severe first, then most recent. Two stable sorts instead of
+        # negating timestamp() floats (which breaks for pre-1970 dates on
+        # some platforms and loses precision on far-future ones).
+        bucket.sort(key=lambda e: e["timestamp"], reverse=True)
+        bucket.sort(key=lambda e: SEVERITY_RANK[e["severity"]])
         for event in bucket[:TOP_ITEMS_PER_CATEGORY]:
             lines.append(f"- **[{event['severity'].upper()}]** "
                          f"{fmt_ts(event['timestamp'])} -- "
@@ -178,8 +197,8 @@ def build_digest(title, since_label, generated_at, events, unparseable):
     # Open exceptions: every critical and warning in the window is open,
     # because the feed carries no resolution field.
     exceptions = [e for e in events if e["severity"] in ("critical", "warning")]
-    exceptions.sort(key=lambda e: (SEVERITY_RANK[e["severity"]],
-                                   -e["timestamp"].timestamp()))
+    exceptions.sort(key=lambda e: e["timestamp"], reverse=True)
+    exceptions.sort(key=lambda e: SEVERITY_RANK[e["severity"]])
     lines.append("## Open exceptions")
     lines.append("")
     if exceptions:
@@ -213,22 +232,41 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="reporting-digest",
         description="Turn a JSONL event feed into an evidence-backed "
-                    "markdown digest.")
-    parser.add_argument("--feed", required=True,
+                    "markdown digest.",
+        epilog="example:\n"
+               "  reporting-digest --feed events.jsonl --out digest.md "
+               "--since 24h --title \"Daily Ops Digest\"",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--feed", required=True, metavar="FEED",
                         help="path to the JSONL event feed")
-    parser.add_argument("--out", required=True,
-                        help="path to write the markdown digest")
-    parser.add_argument("--since", default=None,
-                        help="window like '24h' or '7d'; default is all events")
+    parser.add_argument("--out", required=True, metavar="OUT",
+                        help="path to write the markdown digest "
+                             "(must differ from --feed)")
+    parser.add_argument("--since", default=None, metavar="WINDOW",
+                        help="window like '24h' or '7d' "
+                             "(units: m=minutes, h=hours, d=days, w=weeks); "
+                             "default is all events")
     parser.add_argument("--title", default="Daily Ops Digest",
                         help="digest title (default: %(default)s)")
     args = parser.parse_args(argv)
+
+    if not args.title.strip():
+        fail("--title must not be empty")
 
     feed_path = Path(args.feed)
     if not feed_path.is_file():
         fail(f"feed file not found: {args.feed}")
 
-    events, unparseable, _total_lines = load_events(feed_path)
+    out_path = Path(args.out)
+    try:
+        out_is_feed = out_path.resolve() == feed_path.resolve()
+    except OSError:
+        out_is_feed = False
+    if out_is_feed:
+        fail(f"--out ({args.out}) must not be the same file as --feed; "
+             "refusing to overwrite the feed")
+
+    events, unparseable = load_events(feed_path)
 
     since_label = "all events (no window)"
     if args.since:
@@ -243,10 +281,12 @@ def main(argv=None):
     digest = build_digest(args.title, since_label,
                           datetime.now(timezone.utc), events, unparseable)
 
-    out_path = Path(args.out)
-    if out_path.parent and str(out_path.parent) not in ("", "."):
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(digest + "\n", encoding="utf-8")
+    try:
+        if out_path.parent and str(out_path.parent) not in ("", "."):
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(digest + "\n", encoding="utf-8")
+    except OSError as exc:
+        fail(f"cannot write digest to {args.out}: {exc}")
 
     criticals = sum(1 for e in events if e["severity"] == "critical")
     warnings = sum(1 for e in events if e["severity"] == "warning")

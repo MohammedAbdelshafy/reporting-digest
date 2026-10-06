@@ -8,17 +8,22 @@ and skipped, never crash the run.
 
 ## Install
 
-Requires Python 3.11+ (uses `datetime.fromisoformat` with `Z` support).
+Requires Python 3.9+ (matches `pyproject.toml`; the parser handles `Z`
+suffixes itself, so no 3.11-only APIs are needed). Standard library only —
+no third-party packages.
 
 ```bash
 git clone https://github.com/MohammedAbdelshafy/reporting-digest.git
 cd reporting-digest
-chmod +x reporting-digest
-./reporting-digest --help
+python3 -m reporting_digest --help
 ```
 
-No packages to install. To make it available system-wide, copy or symlink
-`reporting-digest` into a directory on your `PATH`.
+To get the `reporting-digest` command on your `PATH`:
+
+```bash
+pip install .
+reporting-digest --help
+```
 
 ## Usage
 
@@ -26,10 +31,13 @@ No packages to install. To make it available system-wide, copy or symlink
 reporting-digest --feed events.jsonl --out digest.md [--since 24h] [--title "Daily Ops Digest"]
 ```
 
+(`reporting-digest` is the console script installed by `pip install .`; from
+a clone, run `python3 -m reporting_digest ...` from the repo root instead.)
+
 Try it with the bundled synthetic sample feed:
 
 ```bash
-./reporting-digest --feed samples/events.jsonl --out /tmp/digest.md --since 24h --title "Sample Digest"
+python3 -m reporting_digest --feed samples/events.jsonl --out /tmp/digest.md --since 24h --title "Sample Digest"
 ```
 
 Cron example (daily at 08:00):
@@ -40,7 +48,8 @@ Cron example (daily at 08:00):
 
 ## Input
 
-One JSON object per line. Required fields:
+One JSON object per line, UTF-8 encoded (a leading BOM is tolerated).
+Required fields:
 
 | Field      | Type   | Notes                                            |
 | ---------- | ------ | ------------------------------------------------ |
@@ -73,8 +82,13 @@ A markdown file with:
 
 - `0` — success. Criticals in the feed do not change this; the tool is a
   reporter, not an alerter.
-- `2` — unusable input: missing/unreadable feed file, zero parseable events
-  in the selected window, or an invalid `--since` value.
+- `2` — unusable input or output: missing/unreadable feed file, zero
+  parseable events in the selected window, an invalid `--since` value, an
+  empty `--title`, `--out` identical to `--feed` (refused, to protect the
+  feed), or an unwritable `--out` path.
+
+`--out` must resolve to a different file than `--feed`; the run refuses to
+overwrite its own input.
 
 ## Limits
 

@@ -1,0 +1,13 @@
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.egg
+# virtualenvs
+.venv/
+venv/
+# OS / editor
+.DS_Store
+*.swp
