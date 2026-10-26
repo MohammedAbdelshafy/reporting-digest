@@ -1,4 +1,4 @@
-# Scheduled Business Summary
+# Reporting Digest
 
 - Commands and input format: [README.md](README.md)
 - Implementation: [reporting_digest.py](reporting_digest.py)
