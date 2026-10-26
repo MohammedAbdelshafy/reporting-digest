@@ -2,11 +2,11 @@
 type: repository
 status: active
 owner_repo: MohammedAbdelshafy/reporting-digest
-product_name: Scheduled Business Summary
+product_name: Reporting Digest
 source_of_truth: https://github.com/MohammedAbdelshafy/reporting-digest
 ---
 
-# Scheduled Business Summary CONTEXT
+# Reporting Digest CONTEXT
 
 One job: turn an event file into a readable summary that helps a person spot activity and open exceptions.
 
