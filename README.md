@@ -1,10 +1,8 @@
-# reporting-digest
+# Scheduled Business Summary
 
-A cron-friendly Python CLI (stdlib only, no dependencies) that turns a JSONL
-event feed into an evidence-backed markdown digest: counts per category x
-severity, top items per category, and an open-exceptions section. Every
-number in the digest is derived from the feed; malformed lines are counted
-and skipped, never crash the run.
+A small Python command-line tool that turns a JSONL event feed into a readable summary: counts by category and severity, important items, and open exceptions. It uses the supplied feed as its source and reports malformed lines instead of stopping the whole run.
+
+Customer-facing name: **Scheduled Business Summary**. The repository, package and command identifiers remain unchanged.
 
 ## Install
 
