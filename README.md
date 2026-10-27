@@ -3,7 +3,7 @@
 A small Python tool that turns a JSONL event feed into a readable report. It counts events by category and severity, highlights open exceptions, and tells you when lines could not be read.
 A report generated from the records you supply. It does not verify the underlying events or automatically fix them.
 
-Customer-facing name: **Scheduled Business Summary**. The repository, package and command identifiers remain unchanged.
+
 
 ## Install
 
